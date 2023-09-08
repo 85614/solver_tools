@@ -2,19 +2,56 @@
 #include <vector>
 #include <algorithm>
 #include <limits>
+#include "fortran_types.h"
 
-// 相对误差都是相对于 b
+extern "C"
+{
+    void backend_set_comparer(float rtol, float atol, int equal_nan);
+    void backend_compare_int(int *a, int *b, int N);
+    void backend_compare_long(long *a, long *b, int N);
+    void backend_compare_float(float *a, float *b, int N);
+    void backend_compare_double(double *a, double *b, int N);
+
+    void backend_compare_Fint(Fint *a, Fint *b, int N);
+    void backend_compare_Freal(Freal *a, Freal *b, int N);
+    void backend_compare_Fdouble(Fdouble *a, Fdouble *b, int N);
+
+    // fortran 调需要全小写
+    void backend_compare_fint__(Fint *a, Fint *b, int *N)
+    {
+        return backend_compare_Fint(a, b, *N);
+    }
+    void backend_compare_freal__(Freal *a, Freal *b, int *N)
+    {
+        return backend_compare_Freal(a, b, *N);
+    }
+    void backend_compare_fdouble__(Fdouble *a, Fdouble *b, int *N)
+    {
+        return backend_compare_Fdouble(a, b, *N);
+    }
+}
+
+template <typename _Ty>
+static bool greater(_Ty a, _Ty b)
+{
+    if (!std::isunordered(a, b))
+        return a > b;
+    else
+        return std::isfinite(b);
+}
 
 struct comparer_t
 {
-    using _Ty = float;
-    using float_t = typename std::conditional<std::is_floating_point<_Ty>::value, _Ty, double>::type;
+    // using _Ty = float;
+    // using float_t = typename std::conditional<std::is_floating_point<_Ty>::value, _Ty, double>::type;
+    using float_t = double;
 
-    float atol = 1e-5;
+    float atol = 1e-8;
     float rtol = 1e-5;
     bool equal_nan = true;
     int max_print = 5;
 
+    template <typename _Ty>
     _Ty cal_atol(_Ty a, _Ty b)
     {
         if (equal_nan && std::isnan(a) && std::isnan(b))
@@ -22,11 +59,11 @@ struct comparer_t
         return std::abs(a - b);
     }
 
-    _Ty cal_rtol(_Ty a, _Ty b)
+    float_t cal_rtol(float_t a, float_t b)
     {
         if (equal_nan && std::isnan(a) && std::isnan(b))
             return 0;
-        return std::abs((a - b) / (std::max(std::abs(a), std::abs(b)) + std::numeric_limits<_Ty>::denorm_min()));
+        return std::abs((a - b) / (std::max(std::abs(a), std::abs(b)) + std::numeric_limits<float_t>::min()));
 #if 0
         if (a == 0 && b == 0)
         {
@@ -34,20 +71,30 @@ struct comparer_t
         }
         else
         {
-            // return std::abs((a - b) / std::max(std::abs(a), std::abs(b)));
+            return std::abs((a - b) / std::max(std::abs(a), std::abs(b)));
             return std::abs((a - b) / (b));
-            return std::abs((a - b) / (b + std::numeric_limits<_Ty>::denorm_min())); // 加了也是 x/0 = inf
+            return std::abs((a - b) / (b + std::numeric_limits<float_t>::denorm_min())); // 加了也是 x/0 = inf
         }
 #endif
     }
 
+    template <typename _Ty, typename std::enable_if<std::is_integral<_Ty>::value, int>::type = 0>
     bool is_close(_Ty a, _Ty b)
     {
+        // 整型
+        return a == b;
+    }
+
+    template <typename _Ty, typename std::enable_if<std::is_floating_point<_Ty>::value, int>::type = 0>
+    bool is_close(_Ty a, _Ty b)
+    {
+        // 浮点
         if (equal_nan && std::isnan(a) && std::isnan(b))
             return true;
         return std::abs(a - b) <= (atol + rtol * std::abs(b));
     }
 
+    template <typename _Ty>
     int count_close(_Ty *a, _Ty *b, int N)
     {
         int res = 0;
@@ -59,6 +106,7 @@ struct comparer_t
         return res;
     }
 
+    template <typename _Ty>
     std::vector<_Ty> cal_atol(_Ty *a, _Ty *b, int N)
     {
         std::vector<_Ty> res(N);
@@ -69,9 +117,10 @@ struct comparer_t
         return res;
     }
 
-    std::vector<_Ty> cal_rtol(_Ty *a, _Ty *b, int N)
+    template <typename _Ty>
+    std::vector<float_t> cal_rtol(_Ty *a, _Ty *b, int N)
     {
-        std::vector<_Ty> res(N);
+        std::vector<float_t> res(N);
         for (int i = 0; i < N; ++i)
         {
             res[i] = cal_rtol(a[i], b[i]);
@@ -79,6 +128,7 @@ struct comparer_t
         return res;
     }
 
+    template <typename _Ty>
     bool allclose(_Ty *a, _Ty *b, int N)
     {
         for (int i = 0; i < N; ++i)
@@ -89,14 +139,8 @@ struct comparer_t
         return true;
     }
 
-    static bool greater(_Ty a, _Ty b)
-    {
-        if (!std::isunordered(a, b))
-            return a > b;
-        else
-            return std::isfinite(b);
-    }
-    int compare(_Ty *a, _Ty *b, int N)
+    template <typename _Ty>
+    void compare(_Ty *a, _Ty *b, int N)
     {
         int n_close = count_close(a, b, N);
         if (n_close == N)
@@ -116,7 +160,7 @@ struct comparer_t
                 index_atol[i] = i;
             }
             index_rtol = index_atol;
-            
+
             std::partial_sort(index_atol.begin(), index_atol.begin() + n_print_top, index_atol.end(), [&atol](int a, int b)
                               { return greater(atol[a], atol[b]); });
             std::partial_sort(index_rtol.begin(), index_rtol.begin() + n_print_top, index_rtol.end(), [&rtol](int a, int b)
@@ -135,19 +179,29 @@ struct comparer_t
                 int idx = index_rtol[i];
                 std::cout << "index: " << idx << ", ab: [" << a[idx] << ", " << b[idx] << "], atol: " << atol[idx] << ", rtol: " << rtol[idx] << std::endl;
             }
+            std::cout << std::endl;
         }
     }
 };
 
-void test_compare()
+static comparer_t comparer;
+
+void backend_set_comparer(float rtol, float atol, int equal_nan)
 {
-    float a[10]{NAN, INFINITY, 0, 4, NAN, 6, 7, 0, 9.1, 10};
-    float b[10]{NAN, 2, 0, 4, 5, 6, 7, 8, 9, 0};
-    comparer_t().compare(a, b, 10);
+    rtol = rtol < 0 ? 1e-5 : rtol;
+    atol = atol < 0 ? 1e-8 : atol;
+    comparer.rtol = rtol;
+    comparer.atol = atol;
+    comparer.equal_nan = equal_nan;
 }
 
-// int main()
-// {
-//    test_compare();
-//     return 0;
-// }
+#define DEC_COMPARE(type) \
+    void backend_compare_##type(type *a, type *b, int N) { comparer.compare(a, b, N); }
+
+DEC_COMPARE(int);
+DEC_COMPARE(long);
+DEC_COMPARE(float);
+DEC_COMPARE(double);
+DEC_COMPARE(Fint);
+DEC_COMPARE(Freal);
+DEC_COMPARE(Fdouble);
