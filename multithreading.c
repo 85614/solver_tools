@@ -9,7 +9,7 @@ const int BACKEND_MULTITHREADING_LOG_BUFFER_SIZE = 1024; // 日志记录缓冲�
 static int NUM_THREADS = -1;                   // 计算线程的数量
 static pthread_t *THREADS = NULL;              // 计算线程的指针
 static pthread_barrier_t *TASK_BARRIER = NULL; // 任务调度同步屏障
-static void **TASK_DATA = NULL;                // 任务数据指针
+static void *TASK_DATA = NULL;                // 任务数据指针
 static int *THREAD_IDS = NULL;
 static BackendMultiThreadingTaskFunc CURRENT_TASK_FUNC = NULL; // 用于记录当前请求的任务（相当于大小只有1的任务队列）
 static char **THREAD_LOG_BUFFER = NULL;                        // 日志记录缓冲，主要用于sprintf，每个线程（包括请求线程）对应一个缓冲
@@ -64,7 +64,7 @@ void backend_finalize_multithreading()
 /**
  * Fortran请求后端多线程计算处理函数
  */
-void backend_multithreading_request(BackendMultiThreadingTaskFunc task, void **data)
+void backend_multithreading_request(BackendMultiThreadingTaskFunc task, void *data)
 {
 #if BACKEND_MUTITHREADING_DEBUG
     char *log_buffer = backend_multithreading_get_request_thread_log_buffer();
@@ -97,7 +97,7 @@ void backend_multithreading_request(BackendMultiThreadingTaskFunc task, void **d
 void *backend_multithreading_compute_thread_main(void *args)
 {
     int tid = *(int *)args;
-    void **task_data;
+    void *task_data;
     BackendMultiThreadingTaskFunc current_task;
     char runing = 1;
 
@@ -142,46 +142,75 @@ void *backend_multithreading_compute_thread_main(void *args)
     return args;
 }
 
-/**
- * Fortran请求后端每个计算线程输出hello world，无实际意义，测试用
- */
-void backend_request_hello_world__()
+// /**
+//  * Fortran请求后端每个计算线程输出hello world，无实际意义，测试用
+//  */
+// void backend_request_hello_world__()
+// {
+//     backend_multithreading_request(backend_multithreading_hello_world, NULL);
+// }
+
+// /**
+//  * 计算线程示例函数：Hello world
+//  */
+// void backend_multithreading_hello_world(void *data, int thread_id)
+// {
+//     int num_threads = backend_get_num_threads();
+//     Fchar *buffer = backend_multithreading_get_compute_thread_log_buffer(thread_id);
+//     snprintf(buffer, BACKEND_MULTITHREADING_LOG_BUFFER_SIZE,
+//              "[Thread-%d] hello world, total threads: %d", thread_id, num_threads);
+//     backend_log_str_with_time(buffer);
+// }
+
+// /**
+//  * 统一接口获取每个计算线程对应的日志的buffer
+//  */
+// inline char *backend_multithreading_get_compute_thread_log_buffer(int thread_id)
+// {
+//     return THREAD_LOG_BUFFER[thread_id + 1];
+// }
+
+// /*
+//  * 统一接口获取每个请求线程（也即Fortran主程序线程）对应的日志的buffer
+//  */
+// inline char *backend_multithreading_get_request_thread_log_buffer()
+// {
+//     return THREAD_LOG_BUFFER[0];
+// }
+
+// /**
+//  * 获取后端所有计算线程数
+//  */
+// inline int backend_get_num_threads()
+// {
+//     return NUM_THREADS;
+// }
+
+#include "defs.h"
+#include <assert.h>
+
+void mul_f_para_inner__(void *A, void *B, void *C, int *I_BEGIN, int *I_END);
+
+void mul_f_para_request(void *data, int id)
 {
-    backend_multithreading_request(backend_multithreading_hello_world, NULL);
+    float *A, *B, *C;
+    float **ptr = data;
+    A = *ptr++;
+    B = *ptr++;
+    C = *ptr++;
+
+    assert(A[1] == 1);
+    assert(B[1] == 1);
+    int I_BEGIN, I_END;
+    I_BEGIN = N_DIM * ((double)id / NUM_THREADS) + 1;
+    I_END = N_DIM * ((double)(id + 1) / NUM_THREADS);
+    // printf("[%d,%d]", I_BEGIN, I_END);
+    mul_f_para_inner__(A, B, C, &I_BEGIN, &I_END);
 }
 
-/**
- * 计算线程示例函数：Hello world
- */
-void backend_multithreading_hello_world(void **data, int thread_id)
+void mul_f_para_request__(void *A, void *B, void *C)
 {
-    int num_threads = backend_get_num_threads();
-    Fchar *buffer = backend_multithreading_get_compute_thread_log_buffer(thread_id);
-    snprintf(buffer, BACKEND_MULTITHREADING_LOG_BUFFER_SIZE,
-             "[Thread-%d] hello world, total threads: %d", thread_id, num_threads);
-    backend_log_str_with_time(buffer);
-}
-
-/**
- * 统一接口获取每个计算线程对应的日志的buffer
- */
-inline char *backend_multithreading_get_compute_thread_log_buffer(int thread_id)
-{
-    return THREAD_LOG_BUFFER[thread_id + 1];
-}
-
-/*
- * 统一接口获取每个请求线程（也即Fortran主程序线程）对应的日志的buffer
- */
-inline char *backend_multithreading_get_request_thread_log_buffer()
-{
-    return THREAD_LOG_BUFFER[0];
-}
-
-/**
- * 获取后端所有计算线程数
- */
-inline int backend_get_num_threads()
-{
-    return NUM_THREADS;
+    void *data[] = {A, B, C};
+    void **ptr = data;
+    backend_multithreading_request(mul_f_para_request, ptr);
 }

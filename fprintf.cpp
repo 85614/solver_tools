@@ -5,7 +5,7 @@
 #include <cstdarg>
 #include <vector>
 #include <cassert>
-#include "types.h"
+#include "fortran_types.h"
 
 extern "C"
 {

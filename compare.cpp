@@ -2,6 +2,7 @@
 #include <vector>
 #include <algorithm>
 #include <limits>
+#include <cmath>
 #include "fortran_types.h"
 
 extern "C"

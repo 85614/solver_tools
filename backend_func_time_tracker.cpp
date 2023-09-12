@@ -17,9 +17,86 @@ extern "C"
     void backend_push__(const char *func);
     void backend_pop__();
 
-    void backend_push_with_nesc__(const char *func, func_time_t t);
-    void backend_pop_with_nesc__(func_time_t t);
+    void backend_push_with_nsec__(const char *func, func_time_t t);
+    void backend_pop_with_nsec__(func_time_t t);
+
+    long clock_corrected_nsec();
+    void clock_correct();
+    double clock_corrected_sec();
 }
+
+namespace auto_clock_t
+{
+    /**
+     * 一个获取修正时间的时钟
+     * 
+     * t = clock_corrected_nsec()； // 获取修正时间
+     * // 此处做任意耗时操作
+     * clock_correct(); 修正时钟，此刻修正时间认为仍是t
+     * 这段时间的真实流逝量，作为时间修正值，会累计在 t_correction 上
+     * 
+     * 任意时刻，保证：
+     * 修正时间 + 时间修正值 = 真实时间
+     * 
+    */
+    thread_local long t_last; // 最近一次获取的真实时间
+    thread_local long t_correction = 0; // 时间修正值
+
+    long fetch_real_time_nsec()
+    {
+        timespec t;
+        clock_gettime(CLOCK_MONOTONIC, &t);
+        constexpr long nano = (long)1e9;
+        t_last = t.tv_sec * nano + t.tv_nsec;
+        return t_last;
+    }
+};
+
+/**
+ * 获取修正时间（纳秒）
+*/
+long clock_corrected_nsec()
+{
+    using namespace auto_clock_t;
+    return fetch_real_time_nsec() - t_correction;
+}
+
+/**
+ * 修正时钟
+ * 效果为将时钟的时间调整为上次计时时的时间
+ * 即认为上次计时到现在的这段时间
+ * 修正时间并没有流逝，时间修正值增加
+ * 修正时间 + 时间修正值 = 真实时间
+*/
+void clock_correct()
+{
+    using namespace auto_clock_t;
+    auto t_last_last = t_last;
+    t_correction += fetch_real_time_nsec() - t_last_last;
+}
+
+/**
+ * 获取修正时间（秒）
+*/
+double clock_corrected_sec()
+{
+    return clock_corrected_nsec() * 1e-9;
+}
+
+/**
+ * 当前累计的时间修正值
+*/
+long clock_cur_correction_nsec()
+{
+    return auto_clock_t::t_correction;
+}
+
+struct auto_clock_correct_t
+{
+    long val;
+    auto_clock_correct_t() { val = clock_corrected_nsec(); }
+    ~auto_clock_correct_t() { clock_correct(); }
+};
 
 static long backend_real_time_nsec()
 {
@@ -56,6 +133,8 @@ struct backend_func_time_tracker_t
         {
 #define OS_TIME(t) ", \"" #t "\": " << ((t)*1e-9)
             os << "\"n\": " << n;
+            auto t_local_avg = t_local_sum / n;
+            os << OS_TIME(t_local_avg);
             os << OS_TIME(t_dur_sum);
             // if (t_dur_sum != t_local_sum)
             os << OS_TIME(t_local_sum);
@@ -76,7 +155,7 @@ struct backend_func_time_tracker_t
 
     std::map<std::string, func_record_t> func_t_map; // 计时map
     std::vector<func_state_t> func_stack{{""}};      // 调用路径栈
-    func_time_t t_timer{0};                          // 累计计时开销
+    func_time_t t_correction{0};                          // 累计计时开销
 
     static backend_func_time_tracker_t &instance()
     {
@@ -89,34 +168,26 @@ struct backend_func_time_tracker_t
         return _instance;
     }
 
+    backend_func_time_tracker_t()
+    {
+        t_correction = clock_cur_correction_nsec();
+    }
+
     ~backend_func_time_tracker_t()
     {
+        t_correction = clock_cur_correction_nsec() - t_correction;
         backend_print_func_time();
     }
 
-    // push 并处理计时开销
+    // push
     void backend_push_cpp(const char *func, func_time_t t)
-    {
-        _backend_push_cpp(func, t - t_timer);
-        t_timer += backend_real_time_nsec() - t;
-    }
-
-    // pop 并处理计时开销
-    void backend_pop_cpp(func_time_t t)
-    {
-        _backend_pop_cpp(t - t_timer);
-        t_timer += backend_real_time_nsec() - t;
-    }
-
-    // _push
-    void _backend_push_cpp(const char *func, func_time_t t)
     {
         func_stack.emplace_back(func_state_t{func_stack.back().path + "/" + func, t, 0});
         // t 为开始时间
     }
 
-    // _pop
-    void _backend_pop_cpp(func_time_t t)
+    // pop
+    void backend_pop_cpp(func_time_t t)
     {
         auto &node = func_stack.back();
         auto &parent = func_stack.rbegin()[1];
@@ -134,7 +205,7 @@ struct backend_func_time_tracker_t
     {
         std::string t_id = static_cast<std::ostringstream &>(std::ostringstream{} << std::this_thread::get_id()).str();
         std::ofstream os("func_time_" + std::to_string(getpid()) + "_" + t_id + ".log");
-        os << "# t_timer = " << t_timer * 1e-9 << "s\n";
+        os << "# t_correction = " << t_correction * 1e-9 << "s\n";
         os << "func_time_raw_data = [\n";
         auto delimiter = "";
         for (auto it = func_t_map.begin(); it != func_t_map.end(); ++it)
@@ -149,20 +220,20 @@ struct backend_func_time_tracker_t
     }
 };
 
-void backend_push_with_nesc__(const char *func, func_time_t t)
+void backend_push_with_nsec__(const char *func, func_time_t t)
 {
     backend_func_time_tracker_t::instance().backend_push_cpp(func, t);
 }
-void backend_pop_with_nesc__(func_time_t t)
+void backend_pop_with_nsec__(func_time_t t)
 {
     backend_func_time_tracker_t::instance().backend_pop_cpp(t);
 }
 
 void backend_push__(const char *func)
 {
-    backend_push_with_nesc__(func, backend_real_time_nsec());
+    backend_push_with_nsec__(func, auto_clock_correct_t().val);
 }
 void backend_pop__()
 {
-    backend_pop_with_nesc__(backend_real_time_nsec());
+    backend_pop_with_nsec__(auto_clock_correct_t().val);
 }
