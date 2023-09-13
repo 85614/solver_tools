@@ -31,5 +31,5 @@
         ENDDO
 
         WRITE(*,*) C(4,4)
-        
+        CALL BACKEND_CHECK_FREAL("mtxmul" // CHAR(0), C, N_DIM * N_DIM)
         END

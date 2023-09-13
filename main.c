@@ -17,8 +17,8 @@ void mul_f_openmp__();
 void mul_c_O0();
 int main(int argc, char **argv)
 {
-    mul_c_O0();
     mul_c_O3();
+    mul_c_O0();
     mul_f__();
     mul_f_openmp__();
     backend_initialize_multithreading(4);

@@ -20,6 +20,8 @@ dep = $(patsubst %.o, %.d, $(objF) $(objC) $(objCPP))
 
 all: main.exe
 
+# 编译参数基本是直接搬过来的
+
 main.exe: obj $(objs) 
 	@echo "hello" $(objOpenmpF) 
 	/usr/bin/gfortran -rdynamic -fopenmp -o main.exe $(objs) -lstdc++ -L//usr/lib64 -lgfortran -lgcc_s -lm -ldl -lpthread

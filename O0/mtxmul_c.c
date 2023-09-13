@@ -7,6 +7,7 @@ _Ty a[N_DIM][N_DIM];
 _Ty b[N_DIM][N_DIM];
 _Ty c[N_DIM][N_DIM];
 
+void backend_check_Freal(const char *tag, const Freal *data, int N);
 
 void CAT(mul_c_, TAG)()
 {
@@ -39,4 +40,6 @@ void CAT(mul_c_, TAG)()
         backend_pop__();
     }
     printf("hello%f\n", c[3][3]);
+    c[3][3] *= 1.0001;
+    backend_check_Freal("mtxmul", &c[0][0], sizeof(c) / sizeof(c[0][0]));
 }
