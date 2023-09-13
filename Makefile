@@ -1,46 +1,49 @@
 .PHONY: clean
 
-srcF = $(wildcard *.F)
-objF = $(patsubst %.F, obj/%.o, $(srcF))
+srcF = $(wildcard src/*.F)
+objF = $(patsubst src/%.F, obj/%.o, $(srcF))
 
-srcOpenmpF = $(wildcard openmp/*.F)
-objOpenmpF = $(patsubst %.F, obj/%.o, $(srcOpenmpF))
+srcOpenmpF = $(wildcard src/openmp/*.F)
+objOpenmpF = $(patsubst src/%.F, obj/%.o, $(srcOpenmpF))
 
-srcC = $(wildcard *.c)
-objC = $(patsubst %.c, obj/%.o, $(srcC))
+srcC = $(wildcard src/*.c)
+objC = $(patsubst src/%.c, obj/%.o, $(srcC))
 
-srcO0C = $(wildcard O0/*.c)
-objO0C = $(patsubst %.c, obj/%.o, $(srcO0C))
+srcO0C = $(wildcard src/O0/*.c)
+objO0C = $(patsubst src/%.c, obj/%.o, $(srcO0C))
 
-srcCPP = $(wildcard *.cpp)
-objCPP = $(patsubst %.cpp, obj/%.o, $(srcCPP))
+srcCPP = $(wildcard src/*.cpp)
+objCPP = $(patsubst src/%.cpp, obj/%.o, $(srcCPP))
 
 objs = $(objF) $(objC) $(objCPP) $(objOpenmpF) $(objO0C)
 dep = $(patsubst %.o, %.d, $(objF) $(objC) $(objCPP))
 
 all: main.exe
 
-# 编译参数基本是直接搬过来的
+includeDir = -Isrc
+
+# 编译选项基本是直接照搬过来的
 
 main.exe: obj $(objs) 
 	@echo "hello" $(objOpenmpF) 
-	/usr/bin/gfortran -rdynamic -fopenmp -o main.exe $(objs) -lstdc++ -L//usr/lib64 -lgfortran -lgcc_s -lm -ldl -lpthread
+	/usr/bin/gfortran -rdynamic -fopenmp -o $@ $(objs) -lstdc++ -L//usr/lib64 -lgfortran -lgcc_s -lm -ldl -lpthread
 
-$(objOpenmpF):obj/%.o:%.F
-	/usr/bin/gfortran -c -I. -m64 -fimplicit-none -fsecond-underscore -Wunused -Wuninitialized -fcray-pointer -fopenmp -fomit-frame-pointer -fautomatic -fdefault-double-8 $< -o $@ -MMD -MF obj/$*.d -MP
+$(objOpenmpF):obj/%.o:src/%.F
+	/usr/bin/gfortran -c $(includeDir) -m64 -fimplicit-none -fsecond-underscore -Wunused -Wuninitialized -fcray-pointer -fopenmp -fomit-frame-pointer -fautomatic -fdefault-double-8 $< -o $@ -MMD -MF obj/$*.d -MP
 
-$(objF):obj/%.o:%.F
+$(objF):obj/%.o:src/%.F
 	/usr/bin/gfortran -c -m64 -fimplicit-none -fsecond-underscore -Wunused -Wuninitialized -fcray-pointer -O3 -fomit-frame-pointer -fautomatic -fdefault-double-8 $< -o $@ -MMD -MF obj/$*.d -MP
 
-$(objO0C):obj/%.o:%.c
-	/usr/bin/gcc -c -I. -DTAG=O0 -m64 -fPIC -fomit-frame-pointer -funroll-loops -o $@ -MMD -MF obj/$*.d -MP $< 
+$(objO0C):obj/%.o:src/%.c
+	/usr/bin/gcc -c $(includeDir) -DTAG=O0 -m64 -fPIC -fomit-frame-pointer -funroll-loops -o $@ -MMD -MF obj/$*.d -MP $< 
 
-$(objC):obj/%.o:%.c
+$(objC):obj/%.o:src/%.c
 	/usr/bin/gcc -c -m64 -fPIC -O3 -fomit-frame-pointer -funroll-loops -o $@ -MMD -MF obj/$*.d -MP $< 
 
-$(objCPP):obj/%.o:%.cpp
+$(objCPP):obj/%.o:src/%.cpp
 	/usr/bin/g++ -c -std=c++0x -m64 -fPIC -O3 -fomit-frame-pointer -funroll-loops $< -o $@ -MMD -MF obj/$*.d -MP
 
+# 导入生成的.d文件
 -include $(dep)
 
 obj:
@@ -49,4 +52,4 @@ obj:
 	mkdir -p $@/O0
 
 clean:
-	rm -f *.o *.d main.exe obj -r
+	rm main.exe obj -r
